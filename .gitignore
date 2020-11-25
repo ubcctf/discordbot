@@ -1,0 +1,10 @@
+.vscode
+
+node_modules
+tmp
+
+credentials*.json
+config*.json
+test*.js
+
+deploy.sh
