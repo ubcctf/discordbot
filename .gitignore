@@ -8,3 +8,8 @@ config*.json
 test*.js
 
 deploy.sh
+connect.sh
+log.sh
+
+log.txt
+backuplog.sh

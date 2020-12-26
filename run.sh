@@ -1,5 +1,6 @@
 #!/bin/bash
 
+set -euo pipefail
 
 function run_in_background {
     docker run -d --name ubcdiscordbot ubcdiscordbot node /app/app/bot.js "$1"
@@ -11,10 +12,11 @@ if [[ "$1" == "shell" ]]; then
     docker run --rm --name ubcdiscordbot -it --publish 127.0.0.1:9229:9229 -v $(realpath ./app):/app/app ubcdiscordbot /bin/bash
 
 elif [[ "$1" == "production" ]]; then
-    run_in_background ./config-production.json
+    run_in_background production
+    docker logs --follow ubcdiscordbot &>> ./log.txt &
 
 elif [[ "$1" == "test" ]]; then
-    run_in_background ./config-test.json
+    run_in_background test
 
 else
     echo "Invalid usage."

@@ -4,7 +4,10 @@ const globals = require("./globals");
 const { VERIFIED_ROLE_ID } = require(globals.configFile);
 
 
-const log = console.log;
+function log(s) {
+    let datetime = new Date();
+    console.log(`${datetime.toISOString()}: ${s}`);
+}
 
 
 async function addVerifiedRole(guildMember) {
@@ -21,12 +24,6 @@ async function addVerifiedRole(guildMember) {
 function isVerified(guildMember) {
     // roles.cache is apparently supposed to contain the full set of roles for the member, always. Not sure though. There doesn't seem to be any other way to access the full list of roles for a member aside from using the cache attribute.
     return guildMember.roles.cache.has(VERIFIED_ROLE_ID);
-}
-
-
-async function recvMsg(channel, timeout) {
-    let msgs = await channel.awaitMessages(m => !m.author.bot, { max: 1, time: timeout, errors: ["time"] });
-    return msgs.first();
 }
 
 
@@ -59,7 +56,6 @@ function sleep(ms) {
 
 exports.addVerifiedRole = addVerifiedRole
 exports.isVerified = isVerified
-exports.recvMsg = recvMsg
 exports.notifyAdmin = notifyAdmin
 exports.notifyAdminOfException = notifyAdminOfException
 exports.log = log;

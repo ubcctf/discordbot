@@ -12,4 +12,9 @@ if (process.argv.length != 3) {
 exports.guild = null;
 exports.admin = null;
 
-exports.configFile = process.argv[2];
+const map = {
+    "test": "./config-test.json",
+    "production": "./config-production.json",
+}
+
+if (!(exports.configFile = map[process.argv[2]])) throw "Invalid argument";

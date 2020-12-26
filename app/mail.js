@@ -1,8 +1,8 @@
 "use strict";
 
 const nodemailer = require("nodemailer");
-const { gmailPassword, gmailUsername } = require("./credentials.json");
-const { log } = require("./utils");
+const globals = require("./globals");
+const { gmailPassword, gmailUsername } = require(globals.configFile);
 
 
 const transporter = nodemailer.createTransport({

@@ -3,18 +3,14 @@
 const Discord = require('discord.js');
 const crypto = require("crypto");
 
-const { discordAuthToken } = require("./credentials.json");
 const { sendEmail } = require("./mail");
 const globals = require("./globals");
-const { GUILD_ID, ADMIN_ID } = require(globals.configFile);
+const { GUILD_ID, ADMIN_ID, discordAuthToken } = require(globals.configFile);
 const { notifyAdminOfException, notifyAdmin, isVerified, sleep,
-    addVerifiedRole, recvMsg, log, exceptionLogger } = require("./utils");
+    addVerifiedRole, log, exceptionLogger } = require("./utils");
     
 
 const DEBUG = true;
-
-const TOKEN_TIMEOUT = 5 * 60 * 1000; // ms
-const MAX_TOKEN_ATTEMPTS = 3;
 
 const client = new Discord.Client();
 const activeSessions = new Set();
@@ -33,8 +29,7 @@ client.on("message", async message => {
 
 
 client.on("guildMemberAdd", async member => {
-    log(`New member ${member.displayName} joined! Not sending the welcome message for now during testing.`);
-    // await exceptionLogger(onGuildMemberAdd, member);
+    await exceptionLogger(onGuildMemberAdd, member);
 });
 
 
@@ -45,12 +40,13 @@ client.login(discordAuthToken)
 
 
 async function onGuildMemberAdd(member) {
+    log(`New member ${member.displayName}:${member.user.id} joined!`);
     let user = member.user;
     const dm = await user.createDM();
     dm.startTyping();
     await sleep(1500);
     dm.stopTyping();
-    await dm.send(`Hello ${member}! I'm the bot for the UBC CTF team's discord channel. In order to get full access to our server, I'll need you to reply to me with your UBC email address so I can verify that you're affiliated with UBC. E.g., \`\`\`!verify maple@student.ubc.ca\n!verify maple@alum.ubc.ca\n!verify maple@cs.ubc.ca\n!verify maple@<subdomain>.ubc.ca\`\`\`I'll send a verification token to the email address you give me, then I'll need you to send it back to me to verify your email. If you have any questions, please message the #verification-help channel and we'll get back to you :)`);
+    await dm.send(`Hello ${member}! I'm the bot for the UBC CTF team's discord channel. In order to get full access to our server, you'll need to verify your UBC email address with me. E.g., \`\`\`!verify maple@student.ubc.ca\n!verify maple@alum.ubc.ca\n!verify maple@cs.ubc.ca\n!verify maple@<subdomain>.ubc.ca\`\`\`Return the token to me once you receive it. For troubleshooting and additional info, see the #welcome channel.`);
 }
 
 
@@ -88,6 +84,8 @@ class DmSession {
         this.dm = dm;
         this.user = user;
         this.guildMember = guildMember;
+        this.RECV_TIMEOUT = 30 * 60 * 1000; // ms
+        this.MAX_TOKEN_ATTEMPTS = 3;
     }
 
     static async newSession(user, dm) {
@@ -105,13 +103,25 @@ class DmSession {
     }
 
     log(s) {
-        console.log(`Sesh ${this.guildMember.displayName}: ${s}`);
+        log(`${this.guildMember.displayName}:${this.user.id}: ${s}`);
     }
 
     async send(s, ms=1000) {
-        if (DEBUG) this.log(`Sending: ${s}`);
+        if (DEBUG) this.log(`sending: ${s}`);
         await this.typing(ms);
         await this.dm.send(s);
+    }
+
+    async recvMsg(_logID=null) {
+        const msgs = await this.dm.awaitMessages(m => !m.author.bot, 
+            { max: 1, time: this.RECV_TIMEOUT });    
+        let response = msgs.first();
+
+        if (!response) return null;
+
+        response = response.content.trim();
+        this.log((_logID ? _logID+"-" : "") + `recvd: ${response}`);
+        return response;
     }
 
     async typing(ms) {
@@ -146,6 +156,7 @@ class DmSession {
     async start(message) {
 
         this.log("Starting email verification session");
+        this.log(`recvd: ${message}`);
 
         const txt = message.content;
         
@@ -188,24 +199,16 @@ class DmSession {
     
         // TODO Block from sending !verify again until 60 seconds have passed
 
-        for (var i = 0; i < MAX_TOKEN_ATTEMPTS; i++) {
+        for (var i = 0; i < this.MAX_TOKEN_ATTEMPTS; i++) {
 
-            await this.send(`Waiting for the token. You've got ${TOKEN_TIMEOUT / 1000 / 60} minutes. Cancel with \`!cancel\``);
+            await this.send(`Waiting for the token. You've got ${this.RECV_TIMEOUT / 1000 / 60} minutes. Cancel with \`!cancel\``);
             
-            let response;
-            
-            try {
-                response = await recvMsg(this.dm, TOKEN_TIMEOUT);
-            } catch (e) {
-                this.log(e);
-                // ?? TODO CHeck that it's the time error
+            let response = await this.recvMsg();
+
+            if (!response) {
                 await this.send(`Gotta be faster! Send \`!verify\` again.`);
                 break;
             }
-
-            response = response.content.trim();
-
-            this.log(response);
 
             if (response === "!cancel") break;
 
@@ -216,7 +219,7 @@ class DmSession {
 
             if (!isValidTokenSyntax || !isCorrectToken) {
 
-                if (i === MAX_TOKEN_ATTEMPTS - 1) {
+                if (i === this.MAX_TOKEN_ATTEMPTS - 1) {
                     await this.send(`All the tokens you sent were incorrect. Try sending \`!verify\` again, or get help in the #help channel`);
                     break;
                 }
@@ -232,11 +235,19 @@ class DmSession {
                 }
             }
             else if (response === token) {
+
                 await addVerifiedRole(this.guildMember);
-                await this.send("Congrats, you're verified! Go hack stuff.");
+                this.log(`verified ${emailAddress}`);
+                await this.send("Done! Before you go, how did you hear about our club? It would help us plan our outreach better :)");
+
+                // If they reply before the timeout, recvMsg will log it.
+                const response = await this.recvMsg("ea75e9ac");
+
+                if (response) await this.send("Thanks!");
+
                 break;
-            } 
-            else {
+            
+            } else {
                 throw "Should never reach here";
             }
         }
