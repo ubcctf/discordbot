@@ -156,10 +156,17 @@ class DmSession {
             return;
         }
 
-        const emailAddress = message.content;
+        if (!message.content) {
+            await this.send("Send me your email address, e.g., `maple@student.ubc.ca`.");
+            return;
+        }
+
+        // Take the last word in the message as the email address for backward compatibility with the !verify syntax we used to have
+        const split = message.content.split(" ");
+        const emailAddress = split[split.length - 1];
     
         if (!validateEmailAddress(emailAddress)) {
-            await this.send("That doesn't look like a valid UBC email address to me. Send it to me so I could verify it! See the #welcome channel for more info and troubleshooting.");
+            await this.send("Invalid email address. I'm expecting your message to look something like `[your-email]@[subdomain.]ubc.ca`. Try again or see the #welcome channel for more info and troubleshooting.");
             return;
         }
     
