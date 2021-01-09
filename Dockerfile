@@ -1,5 +1,7 @@
 FROM node
 
+ARG NPM_ARGS=""
+
 RUN apt-get update && apt-get upgrade -y
 
 # DEV
@@ -10,4 +12,4 @@ WORKDIR /app
 COPY package.json /app/
 COPY app app/
 
-RUN npm install
+RUN npm install $NPM_ARGS

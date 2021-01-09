@@ -6,11 +6,11 @@ const crypto = require("crypto");
 const { sendEmail } = require("./mail");
 const globals = require("./globals");
 const { GUILD_ID, ADMIN_ID, discordAuthToken } = require(globals.configFile);
-const { notifyAdminOfException, notifyAdmin, isVerified, sleep,
+const { validateEmailAddress, notifyAdminOfException, notifyAdmin, isVerified, sleep,
     addVerifiedRole, log, exceptionLogger } = require("./utils");
-    
 
-const DEBUG = true;
+
+const RECV_TIMEOUT = 30 * 60 * 1000; // ms
 
 const client = new Discord.Client();
 const activeSessions = new Set();
@@ -36,7 +36,7 @@ client.on("guildMemberAdd", async member => {
 client.login(discordAuthToken)
 
 
-// ========================================================================================================
+// ==========================================================================================
 
 
 async function onGuildMemberAdd(member) {
@@ -46,7 +46,7 @@ async function onGuildMemberAdd(member) {
     dm.startTyping();
     await sleep(1500);
     dm.stopTyping();
-    await dm.send(`Hello ${member}! I'm the bot for the UBC CTF team's discord channel. In order to get full access to our server, you'll need to verify your UBC email address with me. E.g., \`\`\`!verify maple@student.ubc.ca\n!verify maple@alum.ubc.ca\n!verify maple@cs.ubc.ca\n!verify maple@<subdomain>.ubc.ca\`\`\`Return the token to me once you receive it. For troubleshooting and additional info, see the #welcome channel.`);
+    await dm.send(`Hello ${member}! I'm the UBC CTF team's Discord bot. In order to get full access to our server, you'll need to verify your UBC email address with me. E.g., \`maple@student.ubc.ca\`. Give me your email address, then return the token to me once you receive my email. For troubleshooting and additional info, see the #welcome channel.`);
 }
 
 
@@ -61,19 +61,9 @@ async function onMessage(message) {
     }
 
     if (message.channel.type === "dm") {
-        
-        if (activeSessions.has(message.author.id)) {
-            return;
-        }
 
         let dmSession = await DmSession.newSession(message.author, message.channel);
-        activeSessions.add(message.author.id);
-
-        try {
-            await dmSession.start(message);
-        } finally {
-            activeSessions.delete(message.author.id);
-        }
+        await dmSession.start(message);
     }
 }
 
@@ -84,7 +74,6 @@ class DmSession {
         this.dm = dm;
         this.user = user;
         this.guildMember = guildMember;
-        this.RECV_TIMEOUT = 30 * 60 * 1000; // ms
         this.MAX_TOKEN_ATTEMPTS = 3;
     }
 
@@ -107,14 +96,13 @@ class DmSession {
     }
 
     async send(s, ms=1000) {
-        if (DEBUG) this.log(`sending: ${s}`);
+        this.log(`sending: ${s}`);
         await this.typing(ms);
         await this.dm.send(s);
     }
 
-    async recvMsg(_logID=null) {
-        const msgs = await this.dm.awaitMessages(m => !m.author.bot, 
-            { max: 1, time: this.RECV_TIMEOUT });    
+    async recvMsg({ timeout=RECV_TIMEOUT, _logID=null }={}) {
+        const msgs = await this.dm.awaitMessages(m => !m.author.bot, { max: 1, time: timeout });    
         let response = msgs.first();
 
         if (!response) return null;
@@ -130,56 +118,48 @@ class DmSession {
         this.dm.stopTyping();
     }
 
-    async validateEmailAddress(emailAddress) {
-        if (emailAddress.split("@").length !== 2) return false;
+    async block() {
+        // Don't handle any messages from this user until the time is future
+        const future = Date.now() + 15*1000;
 
-        const [ localPart, hostPart ] = emailAddress.split("@");
-
-        if (/[\s"'`><]/.test(emailAddress)) {
-            await this.send(`Your email contains some weird characters? IDK Maybe this bot is just broken. Try again or message us in the #help channel.`)
-            return false;
+        while (Date.now() < future) {
+            let timeout;
+            if ((timeout = future - Date.now()) <= 0) break;
+            if (await this.recvMsg({ timeout: timeout })) {
+                const blockedtime = Math.ceil((future - Date.now())/1000);
+                await this.send(`Blocked for ${blockedtime} seconds`);
+            }
         }
-
-        if (!(hostPart == "ubc.ca" || hostPart.endsWith(".ubc.ca"))) {
-            await this.send(`I need an email address that ends with \`ubc.ca\``);
-            return false;
-        }
-
-        if (!localPart) {
-            await this.send(`Doesn't seem like a valid email address`);
-            return false;
-        }
-
-        return true;
     }
 
     async start(message) {
+                
+        if (activeSessions.has(message.author.id)) return;
+
+        try {
+            activeSessions.add(message.author.id);
+            await this._start(message);
+            // await this.block();
+        } finally {
+            activeSessions.delete(message.author.id);
+            this.log("Closing session");
+        }
+    }
+
+    async _start(message) {
 
         this.log("Starting email verification session");
         this.log(`recvd: ${message}`);
 
-        const txt = message.content;
-        
         if (isVerified(this.guildMember)) {
             await this.send("You're already verified, nothing I can do for you.");
             return;
         }
-    
-        if (!txt.startsWith("!verify")) {
-            await this.send(`Please send \`!verify\` to verify your UBC email address. E.g., \`\`\`!verify maple@student.ubc.ca\`\`\``);
-            return;
-        }
 
-        const splitcmd = txt.split(/\s+/);
+        const emailAddress = message.content;
     
-        if (splitcmd.length !== 2) {
-            await this.send(`Must pass exactly one argument to \`!verify\``);
-            return;
-        }
-    
-        const emailAddress = splitcmd[1];
-
-        if (!await this.validateEmailAddress(emailAddress)) {
+        if (!validateEmailAddress(emailAddress)) {
+            await this.send("That doesn't look like a valid UBC email address to me. Send it to me so I could verify it! See the #welcome channel for more info and troubleshooting.");
             return;
         }
     
@@ -189,7 +169,7 @@ class DmSession {
         try {
             await sendEmail(emailAddress, token);
         } catch (e) {
-            await this.send(`Something went wrong while sending you the email, get help in the #help channel!`);
+            await this.send(`Email failed to send.`);
             notifyAdmin(`Failed while sending an email to ${emailAddress}.`);
             notifyAdminOfException(e);
             return;
@@ -201,56 +181,44 @@ class DmSession {
 
         for (var i = 0; i < this.MAX_TOKEN_ATTEMPTS; i++) {
 
-            await this.send(`Waiting for the token. You've got ${this.RECV_TIMEOUT / 1000 / 60} minutes. Cancel with \`!cancel\``);
+            await this.send(`Waiting for the token. You've got ${RECV_TIMEOUT / 1000 / 60} minutes. Cancel with \`!cancel\``);
             
             let response = await this.recvMsg();
 
             if (!response) {
-                await this.send(`Gotta be faster! Send \`!verify\` again.`);
+                await this.send(`Gotta be faster! Send me your email address again.`);
                 break;
             }
 
-            if (response === "!cancel") break;
-
-            const TOKEN_REGEX = /^token{[\w\d]+}$/;
-
-            const isValidTokenSyntax = TOKEN_REGEX.test(response);
-            const isCorrectToken = response === token;
-
-            if (!isValidTokenSyntax || !isCorrectToken) {
-
-                if (i === this.MAX_TOKEN_ATTEMPTS - 1) {
-                    await this.send(`All the tokens you sent were incorrect. Try sending \`!verify\` again, or get help in the #help channel`);
-                    break;
-                }
-
-                if (!isValidTokenSyntax) {
-                    await this.send(`Try again. That doesn't look like a valid token to me. Should match \`${TOKEN_REGEX.source}\``);
-                    continue;
-                }
-
-                if (!isCorrectToken) {
-                    await this.send("Try again. Your token doesn't match what I sent to your email!");
-                    continue;
-                }
+            if (response === "!cancel") {
+                await this.send("Cancelled");
+                break;
             }
-            else if (response === token) {
 
+            const isCorrectToken = response === token || response === randhex
+            
+            if (isCorrectToken) {
+                
                 await addVerifiedRole(this.guildMember);
                 this.log(`verified ${emailAddress}`);
-                await this.send("Done! Before you go, how did you hear about our club? It would help us plan our outreach better :)");
-
-                // If they reply before the timeout, recvMsg will log it.
-                const response = await this.recvMsg("ea75e9ac");
-
-                if (response) await this.send("Thanks!");
+                
+                await this.send("Done! Before you go, how did you hear about our club?");
+                
+                if (await this.recvMsg({ _logID: "ea75e9ac" })) await this.send("Thanks!");
 
                 break;
-            
+
             } else {
-                throw "Should never reach here";
+                
+                if (i < this.MAX_TOKEN_ATTEMPTS - 1) {
+                    await this.send('Incorrect token. Try again!');
+                    continue;
+
+                } else {
+                    await this.send(`Incorrect token. Send me your email address again.`);
+                    break;
+                }
             }
         }
-        this.log("Done");
     }
 }

@@ -5,7 +5,6 @@ tmp
 
 credentials*.json
 config*.json
-test*.js
 
 deploy.sh
 connect.sh

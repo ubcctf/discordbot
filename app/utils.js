@@ -10,6 +10,25 @@ function log(s) {
 }
 
 
+function validateEmailAddress(emailAddress) {
+        
+    let split = emailAddress.split("@");
+    
+    if (split.length !== 2) return false;
+
+    const [ localPart, hostPart ] = split;
+
+    if (/[^a-z0-9._]/i.test(localPart) || 
+        /[^a-z0-9.]/i.test(hostPart)) 
+        return false;
+
+    if (!localPart || !(hostPart == "ubc.ca" || hostPart.endsWith(".ubc.ca"))) 
+        return false;
+
+    return true;
+}
+
+
 async function addVerifiedRole(guildMember) {
     
     if (isVerified(guildMember)) {
@@ -44,7 +63,8 @@ async function exceptionLogger(func, ...args) {
         await func(...args);
     } catch (e) {
         await notifyAdminOfException(e);
-        throw e;
+        // Important: Not killing the app if an exception occurs is dangerous b/c it could end up in an inconsitent state. However, this app has almost no state (currently) so the consequences are low.
+        // throw e;
     }
 }
 
@@ -54,6 +74,7 @@ function sleep(ms) {
 }
 
 
+exports.validateEmailAddress = validateEmailAddress;
 exports.addVerifiedRole = addVerifiedRole
 exports.isVerified = isVerified
 exports.notifyAdmin = notifyAdmin
